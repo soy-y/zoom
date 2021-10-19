@@ -1,6 +1,7 @@
 import http from "http";
 // import Websocket from "ws";
-import SocketIO from "socket.io";
+import { Server } from "socket.io";
+import { instrument } from "@socket.io/admin-ui";
 import express from "express";
 
 const app = express();
@@ -19,7 +20,60 @@ const httpServer = http.createServer(app);
 //이렇게 작성하면 http서버, websocket서버 둘 다 돌릴 수 있음.
 //2개의 protocol, 다 같은 port를 공유하는 것
 // const wss = new Websocket.Server( {server} );
-const wsServer = SocketIO(httpServer);
+const wsServer = new Server(httpServer, {
+    cors: {
+        origin: ["https://admin.socket.io"],
+        credentials: true,
+    },
+});
+
+instrument(wsServer, {
+    auth: false,
+});
+
+function publicRooms(){
+    const {
+        sockets: {
+            adapter: { sids, rooms},
+        },
+    } = wsServer;
+    const publicRooms = [];
+    rooms.forEach((_, key) => {
+        if(sids.get(key) === undefined) {
+            publicRooms.push(key);
+        }
+    });
+    return publicRooms;
+}
+
+function countRoom(roomName) {
+    return wsServer.sockets.adapter.rooms.get(roomName)?.size;
+}
+
+wsServer.on("connection", (socket) => {
+    socket["nickname"] = "Anon";
+    socket.onAny((event) => {
+        console.log(`Socket Event: ${event}`);
+    });
+    socket.on("enter_room", (roomName, done) => {
+        socket.join(roomName);
+        done();
+        socket.to(roomName).emit("welcome", socket.nickname, countRoom(roomName));
+        wsServer.sockets.emit("room_change", publicRooms());
+    })
+    socket.on("disconnecting", ()=> {
+        socket.rooms.forEach((room) => socket.to(room).emit("bye", socket.nickname, countRoom(room)-1));
+    });
+    socket.on("disconnect", ()=> {
+        wsServer.sockets.emit("room_change", publicRooms());
+    })
+    socket.on("new_message", (msg, roomName, done)=>{
+        socket.to(roomName).emit("new_message", `${socket.nickname}: ${msg}`);
+        done();
+    })
+    socket.on("nickname", (nickname) => (socket["nickname"] = nickname));
+
+});
 
 // fake database. 다른 브라우저들과도 연결해주기 위함
 // const sockets = [];
