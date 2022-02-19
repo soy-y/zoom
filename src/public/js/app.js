@@ -83,8 +83,17 @@ function handleCameraClick() {
 
 }
 
-function handleCameraChange() {
-  getMedia(camerasSelect.value);
+async function handleCameraChange() {
+  await getMedia(camerasSelect.value);
+  if (myPeerConnection) {
+    //나 자신을 위한 my stream
+    const videoTrack = myStream.getVideoTracks()[0];
+    //peer에게 보내는 것
+    const videoSender = myPeerConnection
+      .getSenders()
+      .find((sender) => sender.track.kind === "video");
+    videoSender.replaceTrack(videoTrack);
+  }
 }
 
 muteBtn.addEventListener("click", handleMuteClick);
@@ -124,19 +133,55 @@ socket.on("welcome", async () => {
 });
 // Peer B
 socket.on("offer", async(offer) => {
-  myPeerConnection.setLocalDescription(offer);
+  console.log("received the offer");
+  myPeerConnection.setRemoteDescription(offer);
   const answer = await myPeerConnection.createAnswer();
   myPeerConnection.setLocalDescription(answer);
   socket.emit("answer", answer, roomName);
-})
+  console.log("sent the answer");
+});
 
 socket.on("answer", (answer) => {
-  myPeerConnection.setLocalDescription(answer);
+  console.log("reiceived the answer");
+  myPeerConnection.setRemoteDescription(answer);
+});
+
+socket.on("ice", (ice) => {
+  console.log("recived candidate");
+  myPeerConnection.addIceCandidate(ice);
 });
 
 // RTC Code
 
 function makeConnection(){
-  myPeerConnection = new RTCPeerConnection();
-  myStream.getTracks().forEach((track) => myPeerConnection.addTrack(track, myStream));
+  myPeerConnection = new RTCPeerConnection({
+    iceServers: [
+      {
+        urls: [
+          "stun:stun.l.google.com:19302",
+          "stun:stun1.l.google.com:19302",
+          "stun:stun2.l.google.com:19302",
+          "stun:stun3.l.google.com:19302",
+          "stun:stun4.l.google.com:19302",
+        ],
+      },
+    ],
+  });
+  myPeerConnection.addEventListener("icecandidate", handleIce);
+  myPeerConnection.addEventListener("track", handleTrack);
+  myStream
+  .getTracks()
+  .forEach((track) => myPeerConnection.addTrack(track, myStream));
+}
+
+function handleIce(data){
+  console.log("sent candidate");
+  socket.emit("ice", data.candidate, roomName);
+}
+
+function handleTrack(data) {
+  const peerFace = document.getElementById("peerFace");
+  console.log("Peer's stream:",data);
+  peerFace.srcObject = data.streams[0];
+  //console.log("My stream:",myStream);
 }
